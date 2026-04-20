@@ -186,25 +186,36 @@ static int build_tree_level(IndexEntry *entries, int count, int depth, ObjectID 
 
 // Build a tree hierarchy from the current index and write all tree
 // objects to the object store.
+// Build a tree hierarchy from the current index and write all tree
+// objects to the object store.
 int tree_from_index(ObjectID *id_out) {
-    Index index;
-    if (index_load(&index) != 0) {
+    // FIX: Allocate on the heap to prevent stack overflow (5.6MB struct)
+    Index *index = malloc(sizeof(Index));
+    if (!index) return -1;
+
+    if (index_load(index) != 0) {
+        free(index);
         return -1;
     }
     
-    // Handle the edge case of an empty commit / empty staging area
-    if (index.count == 0) {
+    if (index->count == 0) {
         Tree empty_tree;
         empty_tree.count = 0;
         
         void *data; 
         size_t len;
-        if (tree_serialize(&empty_tree, &data, &len) != 0) return -1;
+        if (tree_serialize(&empty_tree, &data, &len) != 0) {
+            free(index);
+            return -1;
+        }
         
         int ret = object_write(OBJ_TREE, data, len, id_out);
         free(data);
+        free(index);
         return ret;
     }
 
-    return build_tree_level(index.entries, index.count, 0, id_out);
+    int ret = build_tree_level(index->entries, index->count, 0, id_out);
+    free(index); // Clean up the heap allocation
+    return ret;
 }
