@@ -221,7 +221,7 @@ int commit_create(const char *message, ObjectID *commit_id_out) {
     snprintf(c.author, sizeof(c.author), "%s", pes_author());
     c.timestamp = (uint64_t)time(NULL);
     
-    // SAFETY NET: Append a newline to the message. Git parsers often choke without it.
+    // SAFETY NET: Append a newline to the message. 
     snprintf(c.message, sizeof(c.message), "%s\n", message);
 
     // 4. Serialize the commit struct
