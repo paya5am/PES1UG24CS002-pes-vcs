@@ -17,6 +17,11 @@
 #include <dirent.h>
 #include <sys/stat.h>
 
+__attribute__((weak)) int index_load(Index *index) {
+    (void)index;
+    return -1; 
+}
+
 // ─── Mode Constants ─────────────────────────────────────────────────────────
 
 #define MODE_FILE      0100644
