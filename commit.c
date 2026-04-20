@@ -193,53 +193,56 @@ int head_update(const ObjectID *new_commit) {
 //   - head_update       : moves the branch pointer to your new commit
 //
 // Returns 0 on success, -1 on error.
+// ─── TODO: Implement these ───────────────────────────────────────────────────
+
 int commit_create(const char *message, ObjectID *commit_id_out) {
     Commit c;
-    memset(&c, 0, sizeof(Commit)); // Initialize to zero to prevent garbage data
+    memset(&c, 0, sizeof(Commit)); // Initialize to zero
 
-    // 1. Build a tree from the index (snapshotting the staging area)
+    // SAFETY NET: Ensure branch directories exist. 
+    // If pes init forgot to make these, head_update will silently fail later.
+    mkdir(".pes/refs", 0755);
+    mkdir(".pes/refs/heads", 0755);
+
+    // 1. Build a tree from the index
     if (tree_from_index(&c.tree) != 0) {
-        fprintf(stderr, "error: failed to build tree from index\n");
+        fprintf(stderr, "DEBUG ERROR: tree_from_index failed to snapshot staging area\n");
         return -1;
     }
 
     // 2. Read current HEAD to establish parent history
-    // If head_read succeeds, a previous commit exists. Otherwise, it's the initial commit.
     if (head_read(&c.parent) == 0) {
         c.has_parent = 1;
     } else {
         c.has_parent = 0; 
     }
 
-    // 3. Populate author and timestamp metadata
-    // pes_author() automatically reads the PES_AUTHOR environment variable or uses the default
+    // 3. Populate metadata
     snprintf(c.author, sizeof(c.author), "%s", pes_author());
     c.timestamp = (uint64_t)time(NULL);
     
-    // Ensure the commit message fits safely within the buffer
-    snprintf(c.message, sizeof(c.message), "%s", message);
+    // SAFETY NET: Append a newline to the message. Git parsers often choke without it.
+    snprintf(c.message, sizeof(c.message), "%s\n", message);
 
-    // 4. Serialize the commit struct into the standardized text format
+    // 4. Serialize the commit struct
     void *data = NULL;
     size_t len = 0;
     if (commit_serialize(&c, &data, &len) != 0) {
-        fprintf(stderr, "error: failed to serialize commit\n");
+        fprintf(stderr, "DEBUG ERROR: commit_serialize failed\n");
         return -1;
     }
 
-    // 5. Write the serialized commit to the object store
+    // 5. Write the commit to the object store
     if (object_write(OBJ_COMMIT, data, len, commit_id_out) != 0) {
-        fprintf(stderr, "error: failed to write commit object\n");
+        fprintf(stderr, "DEBUG ERROR: object_write failed to save the commit\n");
         free(data);
         return -1;
     }
-    
-    // Free the heap-allocated serialization buffer
     free(data);
 
-    // 6. Update HEAD (and the branch file it points to) to reflect this new commit
+    // 6. Update HEAD pointer
     if (head_update(commit_id_out) != 0) {
-        fprintf(stderr, "error: failed to update HEAD reference\n");
+        fprintf(stderr, "DEBUG ERROR: head_update failed to move branch pointer\n");
         return -1;
     }
 
