@@ -94,9 +94,66 @@ int object_exists(const ObjectID *id) {
 //
 // Returns 0 on success, -1 on error.
 int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out) {
-    // TODO: Implement
-    (void)type; (void)data; (void)len; (void)id_out;
-    return -1;
+    const char *type_str = (type == OBJ_TREE) ? "tree" : 
+                           (type == OBJ_COMMIT) ? "commit" : "blob";
+    
+    // 1. Build the full object: header + data
+    char header[64];
+    int header_len = snprintf(header, sizeof(header), "%s %zu", type_str, len);
+    size_t full_len = header_len + 1 + len;
+    
+    uint8_t *full_data = malloc(full_len);
+    if (!full_data) return -1;
+    memcpy(full_data, header, header_len + 1);
+    memcpy(full_data + header_len + 1, data, len);
+
+    // 2. Compute SHA-256 hash
+    compute_hash(full_data, full_len, id_out);
+
+    // 3. Check deduplication
+    if (object_exists(id_out)) {
+        free(full_data);
+        return 0;
+    }
+
+    // 4. Create shard directory
+    char hex[HASH_HEX_SIZE + 1];
+    hash_to_hex(id_out, hex);
+    char dir_path[256];
+    snprintf(dir_path, sizeof(dir_path), "%s/%.2s", OBJECTS_DIR, hex);
+    mkdir(dir_path, 0755); // Ignore error if it already exists
+
+    // 5. Write to a temporary file
+    char tmp_path[256];
+    snprintf(tmp_path, sizeof(tmp_path), "%s/tmp_%d", dir_path, getpid());
+    int fd = open(tmp_path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (fd < 0) {
+        free(full_data);
+        return -1;
+    }
+    
+    if (write(fd, full_data, full_len) != (ssize_t)full_len) {
+        close(fd);
+        unlink(tmp_path);
+        free(full_data);
+        return -1;
+    }
+
+    // 6. fsync to ensure data reaches disk
+    fsync(fd);
+    close(fd);
+
+    // 7. Atomically rename temp file to final path
+    char final_path[512];
+    object_path(id_out, final_path, sizeof(final_path));
+    if (rename(tmp_path, final_path) != 0) {
+        unlink(tmp_path);
+        free(full_data);
+        return -1;
+    }
+
+    free(full_data);
+    return 0;
 }
 
 // Read an object from the store.
@@ -121,8 +178,63 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
 //
 // The caller is responsible for calling free(*data_out).
 // Returns 0 on success, -1 on error (file not found, corrupt, etc.).
+
 int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_t *len_out) {
-    // TODO: Implement
-    (void)id; (void)type_out; (void)data_out; (void)len_out;
-    return -1;
+    char path[512];
+    object_path(id, path, sizeof(path));
+
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+
+    fseek(f, 0, SEEK_END);
+    long file_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    uint8_t *full_data = malloc(file_size);
+    if (!full_data) {
+        fclose(f);
+        return -1;
+    }
+
+    if (fread(full_data, 1, file_size, f) != (size_t)file_size) {
+        free(full_data);
+        fclose(f);
+        return -1;
+    }
+    fclose(f);
+
+    // Verify integrity
+    ObjectID computed_id;
+    compute_hash(full_data, file_size, &computed_id);
+    if (memcmp(id->hash, computed_id.hash, HASH_SIZE) != 0) {
+        free(full_data);
+        return -1; // Hash mismatch (corruption)
+    }
+
+    // Parse header
+    uint8_t *null_byte = memchr(full_data, '\0', file_size);
+    if (!null_byte) {
+        free(full_data);
+        return -1;
+    }
+
+    if (strncmp((char *)full_data, "blob", 4) == 0) *type_out = OBJ_BLOB;
+    else if (strncmp((char *)full_data, "tree", 4) == 0) *type_out = OBJ_TREE;
+    else if (strncmp((char *)full_data, "commit", 6) == 0) *type_out = OBJ_COMMIT;
+    else {
+        free(full_data);
+        return -1;
+    }
+
+    size_t header_len = null_byte - full_data;
+    *len_out = file_size - header_len - 1;
+    *data_out = malloc(*len_out);
+    if (!*data_out) {
+        free(full_data);
+        return -1;
+    }
+
+    memcpy(*data_out, null_byte + 1, *len_out);
+    free(full_data);
+    return 0;
 }
