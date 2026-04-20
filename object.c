@@ -139,7 +139,7 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
         return -1;
     }
 
-    // 6. fsync to ensure data reaches disk
+    
     fsync(fd);
     close(fd);
 
@@ -203,15 +203,15 @@ int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_
     }
     fclose(f);
 
-    // Verify integrity
+    
     ObjectID computed_id;
     compute_hash(full_data, file_size, &computed_id);
     if (memcmp(id->hash, computed_id.hash, HASH_SIZE) != 0) {
         free(full_data);
-        return -1; // Hash mismatch (corruption)
+        return -1; // Hash mismatch 
     }
 
-    // Parse header
+    // Parse 
     uint8_t *null_byte = memchr(full_data, '\0', file_size);
     if (!null_byte) {
         free(full_data);
