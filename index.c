@@ -244,14 +244,11 @@ int index_save(const Index *index) {
 // Returns 0 on success, -1 on error.
 int index_add(Index *index, const char *path) {
     struct stat st;
-    
-    // 1. Get file metadata (size, permissions, modified time)
     if (lstat(path, &st) != 0) {
         fprintf(stderr, "error: could not stat file '%s'\n", path);
         return -1;
     }
 
-    // 2. Read the entire file into memory to create the blob
     FILE *f = fopen(path, "rb");
     if (!f) {
         fprintf(stderr, "error: could not open file '%s'\n", path);
@@ -265,7 +262,6 @@ int index_add(Index *index, const char *path) {
             fclose(f);
             return -1;
         }
-
         if (fread(data, 1, st.st_size, f) != (size_t)st.st_size) {
             free(data);
             fclose(f);
@@ -274,15 +270,13 @@ int index_add(Index *index, const char *path) {
     }
     fclose(f);
 
-    // 3. Write the file contents to the object store as a BLOB
     ObjectID blob_id;
     if (object_write(OBJ_BLOB, data, st.st_size, &blob_id) != 0) {
         if (data) free(data);
         return -1;
     }
-    if (data) free(data); // Free after writing to the store
+    if (data) free(data);
 
-    // 4. Update the index entry (or create a new one if it doesn't exist)
     IndexEntry *entry = index_find(index, path);
     if (!entry) {
         if (index->count >= MAX_INDEX_ENTRIES) {
@@ -290,16 +284,15 @@ int index_add(Index *index, const char *path) {
             return -1;
         }
         entry = &index->entries[index->count++];
-        strncpy(entry->path, path, sizeof(entry->path) - 1);
-        entry->path[sizeof(entry->path) - 1] = '\0';
+        
+        // FIX: Use snprintf instead of strncpy to fix the GCC compilation warning
+        snprintf(entry->path, sizeof(entry->path), "%s", path);
     }
 
-    // Determine if the file is executable (100755) or regular (100644)
     entry->mode = (st.st_mode & S_IXUSR) ? 0100755 : 0100644;
     entry->hash = blob_id;
     entry->mtime_sec = (uint64_t)st.st_mtime;
     entry->size = (uint32_t)st.st_size;
 
-    // 5. Save the updated index back to disk
     return index_save(index);
 }
