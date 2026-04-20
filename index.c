@@ -193,22 +193,26 @@ static int compare_index_entries(const void *a, const void *b) {
 //   - rename                           : atomically moving the temp file over the old index
 //
 // Returns 0 on success, -1 on error.
+// Save the index to .pes/index atomically.
 int index_save(const Index *index) {
-    // 1. Create a mutable copy of the index so we can sort it.
-    // Git requires the index and tree objects to be sorted alphabetically.
-    Index sorted_index = *index;
-    qsort(sorted_index.entries, sorted_index.count, sizeof(IndexEntry), compare_index_entries);
+    // FIX: Allocate the 5.6MB copy on the heap to prevent stack overflow
+    Index *sorted_index = malloc(sizeof(Index));
+    if (!sorted_index) return -1;
 
-    // 2. Write to a temporary file first to prevent corruption during crashes
+    *sorted_index = *index;
+    qsort(sorted_index->entries, sorted_index->count, sizeof(IndexEntry), compare_index_entries);
+
     char tmp_path[512];
     snprintf(tmp_path, sizeof(tmp_path), ".pes/index.tmp");
     
     FILE *f = fopen(tmp_path, "w");
-    if (!f) return -1;
+    if (!f) {
+        free(sorted_index);
+        return -1;
+    }
 
-    // 3. Serialize each entry back to the text format
-    for (int i = 0; i < sorted_index.count; i++) {
-        const IndexEntry *e = &sorted_index.entries[i];
+    for (int i = 0; i < sorted_index->count; i++) {
+        const IndexEntry *e = &sorted_index->entries[i];
         char hex[HASH_HEX_SIZE + 1];
         hash_to_hex(&e->hash, hex);
         
@@ -216,14 +220,13 @@ int index_save(const Index *index) {
                 e->mode, hex, (unsigned long long)e->mtime_sec, e->size, e->path);
     }
 
-    // 4. Force data to disk before renaming (Crucial for atomicity)
     fflush(f);
     fsync(fileno(f));
     fclose(f);
+    free(sorted_index); // Clean up the heap allocation
 
-    // 5. Atomically replace the old index file with our new temporary one
     if (rename(tmp_path, ".pes/index") != 0) {
-        unlink(tmp_path); // Cleanup on failure
+        unlink(tmp_path);
         return -1;
     }
     
